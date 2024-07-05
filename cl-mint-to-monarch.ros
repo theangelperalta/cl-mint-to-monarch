@@ -1,0 +1,76 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+(progn ;;init forms
+  (ros:ensure-asdf)
+  #+quicklisp(ql:quickload '(:cl-json) :silent t)
+  )
+
+(defpackage :ros.script.cl-mint-to-monarch.3929120538
+  (:use :cl))
+(in-package :ros.script.cl-mint-to-monarch.3929120538)
+
+(defstruct mint-account
+  id
+  display-name)
+
+
+(defstruct mint-transaction
+  date
+  description
+  original-description
+  amount
+  transaction-type
+  category-name
+  account-name
+  labels
+  notes)
+
+(defun assoc-path (alist path &key (key #'identity) (test #'eql) (default nil))
+  "Retrieve the value in the given ALIST represented by the given PATH"
+  (or (reduce (lambda (alist k)
+                (cdr (assoc k alist :key key :test test)))
+              path
+              :initial-value alist)
+      default))
+
+(defun json-data (path)
+  (cl-json:decode-json-from-string
+   (uiop:read-file-string path)))
+
+(defun compute-account-display-name (accounts ids)
+  (let ((account-id (first ids)))
+    (mint-account-display-name (gethash account-id accounts))))
+
+(defun make-account-hash-map (accounts)
+  (loop for account in accounts
+        with hash-map = (make-hash-table :test 'equal)
+        collect (setf (gethash (mint-account-id account) hash-map) account)
+        finally (return hash-map)))
+
+(defun decode-mint-account (data)
+  (make-mint-account :id (assoc-path data '(:id)) :display-name (concatenate 'string (assoc-path data '(:description)) " " (assoc-path data '(:display-name)))))
+
+(defun decode-mint-accounts (data)
+  (mapcar (lambda (account) (decode-mint-account account)) data))
+
+;; (compute-account-display-name accounts (assoc-path data '(:associations)))
+(defun decode-mint-transaction (accounts data)
+  (make-mint-transaction :date (assoc-path data '(:transaction-date)) :description (assoc-path data '(:description)) :original-description (assoc-path data '(:description)) :amount (assoc-path data '(:amount)) :transaction-type (assoc-path data '(:transaction-type)) :category-name (assoc-path data '(:category-name)) :account-name (compute-account-display-name accounts (assoc-path data '(:associations)))))
+
+(defun decode-mint-transactions (accounts data)
+  (mapcar (lambda (transaction) (decode-mint-transaction accounts transaction)) data))
+
+;; TODO: Create a CSV with expected data
+(defun main (&rest argv)
+  (declare (ignorable argv))
+  (let* ((account-path (first argv))
+         (transaction-path (second argv))
+         (accounts-hash-map (make-account-hash-map (decode-mint-accounts
+    (json-data account-path))))
+         (transactions (decode-mint-transactions accounts-hash-map (json-data transaction-path))))
+    (format t "~A"
+    transactions)))
+;;; vim: set ft=lisp lisp:
