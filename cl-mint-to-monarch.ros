@@ -5,7 +5,7 @@ exec ros -Q -- $0 "$@"
 |#
 (progn ;;init forms
   (ros:ensure-asdf)
-  #+quicklisp(ql:quickload '(:cl-json) :silent t)
+  #+quicklisp(ql:quickload '(:cl-json :cl-csv) :silent t)
   )
 
 (defpackage :ros.script.cl-mint-to-monarch.3929120538
@@ -28,6 +28,9 @@ exec ros -Q -- $0 "$@"
   labels
   notes)
 
+(defparameter *transaction-type-debit* "debit")
+(defparameter *transaction-type-credit* "credit")
+
 (defun assoc-path (alist path &key (key #'identity) (test #'eql) (default nil))
   "Retrieve the value in the given ALIST represented by the given PATH"
   (or (reduce (lambda (alist k)
@@ -40,9 +43,19 @@ exec ros -Q -- $0 "$@"
   (cl-json:decode-json-from-string
    (uiop:read-file-string path)))
 
+(defun compute-transaction-type (transaction)
+  (let ((transaction-type (string-downcase (assoc-path transaction '(:transaction-type))))
+        (transaction-value-type (string-downcase (assoc-path transaction '(:transaction-value-type)))))
+  (cond ((or (equal transaction-type *transaction-type-debit*) (equal transaction-value-type *transaction-type-debit*)) *transaction-type-debit*)
+        ((or (equal transaction-type *transaction-type-credit*) (equal transaction-value-type *transaction-type-credit*)) *transaction-type-credit*)
+        ((search *transaction-type-debit* transaction-type :test 'equal) *transaction-type-debit*)
+        ((search *transaction-type-credit* transaction-type :test 'equal) *transaction-type-credit*)
+        (t "unknown"))))
+
 (defun compute-account-display-name (accounts ids)
-  (let ((account-id (first ids)))
-    (mint-account-display-name (gethash account-id accounts))))
+  (let* ((account-id (first ids))
+         (account (gethash account-id accounts)))
+    (if account (mint-account-display-name account) "Unknown")))
 
 (defun make-account-hash-map (accounts)
   (loop for account in accounts
@@ -58,7 +71,7 @@ exec ros -Q -- $0 "$@"
 
 ;; (compute-account-display-name accounts (assoc-path data '(:associations)))
 (defun decode-mint-transaction (accounts data)
-  (make-mint-transaction :date (assoc-path data '(:transaction-date)) :description (assoc-path data '(:description)) :original-description (assoc-path data '(:description)) :amount (assoc-path data '(:amount)) :transaction-type (assoc-path data '(:transaction-type)) :category-name (assoc-path data '(:category-name)) :account-name (compute-account-display-name accounts (assoc-path data '(:associations)))))
+  (make-mint-transaction :date (assoc-path data '(:transaction-date)) :description (assoc-path data '(:description)) :original-description (assoc-path data '(:description)) :amount (assoc-path data '(:amount)) :transaction-type (compute-transaction-type data) :category-name (assoc-path data '(:category-name)) :account-name (compute-account-display-name accounts (assoc-path data '(:associations)))))
 
 (defun decode-mint-transactions (accounts data)
   (mapcar (lambda (transaction) (decode-mint-transaction accounts transaction)) data))
@@ -68,9 +81,19 @@ exec ros -Q -- $0 "$@"
   (declare (ignorable argv))
   (let* ((account-path (first argv))
          (transaction-path (second argv))
+         (csv-write-path (pathname (concatenate 'string (directory-namestring transaction-path) (concatenate 'string (pathname-name transaction-path) ".csv"))))
          (accounts-hash-map (make-account-hash-map (decode-mint-accounts
     (json-data account-path))))
          (transactions (decode-mint-transactions accounts-hash-map (json-data transaction-path))))
-    (format t "~A"
-    transactions)))
+    (cl-csv::with-csv-output-stream (s csv-write-path)
+      (cl-csv:write-csv-row '("Date" "Description" "Original Description" "Amount" "Transaction Type" "Category" "Account Name" "Labels" "Notes") :stream s)
+      (cl-csv:write-csv (mapcar (lambda (transaction) (list (mint-transaction-date transaction)
+                                           (mint-transaction-description transaction)
+                                           (mint-transaction-original-description transaction)
+                                           (mint-transaction-amount transaction)
+                                           (mint-transaction-transaction-type transaction)
+                                           (mint-transaction-category-name transaction)
+                                           (mint-transaction-account-name transaction)
+                                           ""
+                                           "")) transactions) :stream s))))
 ;;; vim: set ft=lisp lisp:
