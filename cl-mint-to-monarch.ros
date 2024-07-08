@@ -43,19 +43,33 @@ exec ros -Q -- $0 "$@"
   (cl-json:decode-json-from-string
    (uiop:read-file-string path)))
 
+(defun compute-transaction-date (transaction)
+  (let ((transaction-date (assoc-path transaction '(:transaction-date)))
+        (posted-date (assoc-path transaction '(:posted-date))))
+  (or transaction-date posted-date)))
+
 (defun compute-transaction-type (transaction)
   (let ((transaction-type (string-downcase (assoc-path transaction '(:transaction-type))))
-        (transaction-value-type (string-downcase (assoc-path transaction '(:transaction-value-type)))))
-  (cond ((or (equal transaction-type *transaction-type-debit*) (equal transaction-value-type *transaction-type-debit*) (equal transaction-type "pos") (equal transaction-type "xfer")) *transaction-type-debit*)
-        ((or (equal transaction-type *transaction-type-credit*) (equal transaction-value-type *transaction-type-credit*) (equal transaction-type "directdep")) *transaction-type-credit*)
+        (transaction-value-type (string-downcase (assoc-path transaction '(:transaction-value-type))))
+        (category-id (string-downcase (assoc-path transaction '(:category-id))))
+        (category-name (string-downcase (assoc-path transaction '(:category-name)))))
+    ;; Category IDs
+    ;; 5003 - Dividend & Cap Gains - Credit
+    ;; 50 - Investments - Debit
+    ;; 207 - Reinvestments - Debit
+  (cond ((or (equal transaction-type *transaction-type-debit*) (equal transaction-value-type *transaction-type-debit*) (equal category-id "50") (equal category-id "207") (equal transaction-type "fee") (equal transaction-type "pos") (equal transaction-type "xfer") (equal category-name "loan payment") (equal category-name "loans")) *transaction-type-debit*)
+        ((or (equal transaction-type *transaction-type-credit*) (equal transaction-value-type *transaction-type-credit*) (equal category-id "5003") (equal transaction-type "directdep")) *transaction-type-credit*)
         ((search *transaction-type-debit* transaction-type :test 'equal) *transaction-type-debit*)
         ((search *transaction-type-credit* transaction-type :test 'equal) *transaction-type-credit*)
         (t transaction-type))))
 
+;; TODO: Iterate over all ids until match is found
 (defun compute-account-display-name (accounts ids)
-  (let* ((account-id (first ids))
-         (account (gethash account-id accounts)))
-    (if account (mint-account-display-name account) "Unknown")))
+  (let* ((account (first (loop for id in ids
+                               if (gethash id accounts)
+                                 collect (gethash id accounts)
+                               ))))
+    (if account (mint-account-display-name account))))
 
 (defun make-account-hash-map (accounts)
   (loop for account in accounts
@@ -71,7 +85,7 @@ exec ros -Q -- $0 "$@"
 
 ;; (compute-account-display-name accounts (assoc-path data '(:associations)))
 (defun decode-mint-transaction (accounts data)
-  (make-mint-transaction :date (assoc-path data '(:transaction-date)) :description (assoc-path data '(:description)) :original-description (assoc-path data '(:description)) :amount (assoc-path data '(:amount)) :transaction-type (compute-transaction-type data) :category-name (assoc-path data '(:category-name)) :account-name (compute-account-display-name accounts (assoc-path data '(:associations)))))
+  (make-mint-transaction :date (compute-transaction-date data) :description (assoc-path data '(:description)) :original-description (assoc-path data '(:description)) :amount (assoc-path data '(:amount)) :transaction-type (compute-transaction-type data) :category-name (assoc-path data '(:category-name)) :account-name (compute-account-display-name accounts (assoc-path data '(:associations)))))
 
 (defun decode-mint-transactions (accounts data)
   (mapcar (lambda (transaction) (decode-mint-transaction accounts transaction)) data))
